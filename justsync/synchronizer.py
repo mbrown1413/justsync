@@ -6,6 +6,9 @@ logger = logging.getLogger(__name__)
 
 
 class Synchronizer:
+    """
+    Coordinates multiple SyncRoot objects.
+    """
 
     def __init__(self, *roots):
         self.roots = roots
@@ -26,7 +29,11 @@ class Synchronizer:
                         f'{root1.root_path}\n{root2.root_path}'
                     )
 
+        for root in self.roots:
+            root.inspect_root_for_changes()
+
     def sync(self):
+        """Sync all roots with eachother."""
         path_seen_counter = defaultdict(lambda: 0)
         while True:
             path = self._get_changed_file()
@@ -44,6 +51,9 @@ class Synchronizer:
                 break
 
             self._sync_file(path)
+
+        for root in self.roots:
+            root.write_state()
 
     def _sync_file(self, path):
         """
@@ -87,21 +97,9 @@ class Synchronizer:
         # not, maybe it was deleted since then?
         # TODO: Not sure how to handle this case. We could just delete, since
         #       it's clear one of the roots deleted the file. It might be best
-        #       to just call inspect_file_for_changes() again and let the
+        #       to just call inspect_path_for_changes() again and let the
         #       process happen normally from that point.
         assert last_modified_root is not None
-
-        # Fix a tricky race condition.
-        # We technically shouldn't read the source file until our current time
-        # is past the file's modified time, since the file could still be
-        # updated before the next time increment. We might not detect that
-        # update (although we could since we watch other attributes like the
-        # file size as well). This problem isn't as bad on systems with
-        # nanosecond precision, but it happens surprisingly often during
-        # testing.
-        #while last_modified_root.current_filesystem_time() == last_modified:
-        #    logger.debug("Sleeping because modified time is now")
-        #    time.sleep(0.01)
 
         # Update all other roots.
         # Note: if we have two roots with the same update (or same created

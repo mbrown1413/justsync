@@ -38,6 +38,7 @@ class TestSync(unittest.TestCase):
         return path
 
     def make_temp_dirs(self, count):
+        """Return a list of `count` temporary directories."""
         return [self.make_temp_dir() for i in range(count)]
 
     def write_file(self, root_path, path, content=""):
@@ -53,11 +54,19 @@ class TestSync(unittest.TestCase):
         self.assertFileAbsent(root_path, path)
 
     def sync_dirs(self, *dirs):
+        """
+        Create a SyncRoot for each of the given dirs and synchronize
+        them.
+        """
         roots = [SyncRoot(d) for d in dirs]
         synchronizer = Synchronizer(*roots)
         synchronizer.sync()
 
     def sync_all(self):
+        """
+        Sync all temporary directories returned by `make_temp_dir` and
+        `make_temp_dirs`.
+        """
         self.sync_dirs(*self._temp_dirs)
 
     ########## Assertions ##########
@@ -130,7 +139,7 @@ class TestSync(unittest.TestCase):
 
     def test_no_overlapping_roots(self):
         """Two roots that overlap should throw an error."""
-        dir0 = self.make_temp_dirs(1)[0]
+        dir0 = self.make_temp_dir()
         with self.assertRaises(ValueError):
             Synchronizer(SyncRoot(dir0), SyncRoot(dir0))
 
@@ -138,6 +147,7 @@ class TestSync(unittest.TestCase):
         with self.assertRaises(ValueError):
             Synchronizer(SyncRoot(dir0), SyncRoot(dir1))
 
+    @unittest.skip
     def test_file_in_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
         self.write_file(dir0, "subdir/foo", "bar")
@@ -145,6 +155,7 @@ class TestSync(unittest.TestCase):
         self.assertFile(dir0, "subdir/foo", "bar")
         self.assertFile(dir1, "subdir/foo", "bar")
 
+    @unittest.skip
     def test_empty_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
         dir0_emptydir = os.path.join(dir0, "emptydir")
