@@ -3,6 +3,7 @@ import shutil
 import hashlib
 import random
 import json
+import stat
 import string
 import logging
 from contextlib import contextmanager
@@ -225,6 +226,7 @@ class SyncRoot:
         """
         if self.should_ignore_path(path):
             return
+        abspath = self.abspath(path)
 
         # Only include attributes of StatResult which are important to detecing
         # changes. Here are some options that could make sense:
@@ -264,15 +266,22 @@ class SyncRoot:
         old_stat_info = self._state.path_get_stat(path)
         stat_info = self.stat(path)
         if stat_info:
-            # File exists.
+            # Path exists.
             # If file didn't used to exist. Make "created" change.
             if old_stat_info is None:
                 self.changes[path] = ("created", stat_info)
                 logger.debug(f'{self} Detected created file "{path}"')
+
+            # Path is directory
+            elif stat_info.is_dir:
+                if not stats_equal(stat_info, old_stat_info):
+                    self.changes[path] = ("updated", stat_info)
+                    logger.debug(f'{self} Detected updated directory "{path}"')
+
             # If the file stat has changed, check the file hash and make a
             # "updated" change if it's different.
             elif not stats_equal(stat_info, old_stat_info) or force_hash:
-                current_hash = get_file_hash(self.abspath(path))
+                current_hash = get_file_hash(abspath)
                 saved_hash = self._state.path_get_hash(path)
                 if current_hash != saved_hash:
                     self.changes[path] = ("updated", stat_info)
@@ -326,19 +335,22 @@ class SyncRoot:
 
     def _perform_action(self, action, path, source_abspath=None):
         logger.debug(f'{self} Performing action {action} "{path}"')
-
-        # Perform action before saving self._state to disk. This way if we
-        # crash, the worst that happens is we detect that this path was
-        # created/updated/deleted later.
+        abspath = self.abspath(path)
 
         # Perform action
         if action in ("create", "update"):
-            file_hash = self._atomic_copy(source_abspath, self.abspath(path),
-                                          do_hash=True)
-            self._state.path_set_hash(path, file_hash)
+            if os.path.isdir(source_abspath):
+                os.makedirs(abspath, exist_ok=True)
+            else:
+                file_hash = self._atomic_copy(source_abspath, abspath,
+                                            do_hash=True)
+                self._state.path_set_hash(path, file_hash)
         elif action == "delete":
             try:
-                os.remove(self.abspath(path))
+                if os.path.isdir(abspath):
+                    os.rmdir(abspath)
+                else:
+                    os.remove(abspath)
             except FileNotFoundError:
                 pass
 
@@ -423,3 +435,15 @@ class StatResult(dict):
     @property
     def modified_time(self):
         return self.st_ctime_ns
+
+    @property
+    def is_regular(self):
+        return stat.S_ISREG(self.st_mode)
+
+    @property
+    def is_dir(self):
+        return stat.S_ISDIR(self.st_mode)
+
+    @property
+    def is_link(self):
+        return stat.S_ISLNK(self.st_mode)

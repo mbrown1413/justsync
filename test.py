@@ -147,7 +147,6 @@ class TestSync(unittest.TestCase):
         with self.assertRaises(ValueError):
             Synchronizer(SyncRoot(dir0), SyncRoot(dir1))
 
-    @unittest.skip
     def test_file_in_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
         self.write_file(dir0, "subdir/foo", "bar")
@@ -155,7 +154,6 @@ class TestSync(unittest.TestCase):
         self.assertFile(dir0, "subdir/foo", "bar")
         self.assertFile(dir1, "subdir/foo", "bar")
 
-    @unittest.skip
     def test_empty_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
         dir0_emptydir = os.path.join(dir0, "emptydir")
