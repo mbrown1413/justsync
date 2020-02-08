@@ -168,6 +168,67 @@ class TestSync(unittest.TestCase):
         self.assertFalse(os.path.exists(dir0_emptydir))
         self.assertFalse(os.path.exists(dir1_emptydir))
 
+    def test_sync_3(self):
+        """Sync 3 directories with each other."""
+        dir0, dir1, dir2 = self.make_temp_dirs(3)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
+        self.assertFile(dir2, "foo", "bar")
+
+    def test_sync_2_then_3(self):
+        """Sync two directories then add a third and sync again."""
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
+
+        dir2 = self.make_temp_dir()
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
+        self.assertFile(dir2, "foo", "bar")
+
+    def test_skipped_update(self):
+        """Sync 3 dirs but skip one dir when a file is updated."""
+        dir0, dir1, dir2 = self.make_temp_dirs(3)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+
+        # Update dir0 and sync dir0/dir1 but not dir2
+        self.write_file(dir0, "foo", "baz")
+        self.sync_dirs(dir0, dir1)
+        self.assertFile(dir0, "foo", "baz")
+        self.assertFile(dir1, "foo", "baz")
+        self.assertFile(dir2, "foo", "bar")
+
+        # dir2 should pick up the change when all are sync'd
+        self.sync_all()
+        self.assertFile(dir0, "foo", "baz")
+        self.assertFile(dir1, "foo", "baz")
+        self.assertFile(dir2, "foo", "baz")
+
+    def test_skipped_dir_create(self):
+        """Sync 3 dirs but skip one dir when a folder is created."""
+        dir0, dir1, dir2 = self.make_temp_dirs(3)
+        self.sync_all()
+
+        # Make subdir in dir0 and sync dir0/dir1 but not dir2
+        os.makedirs(os.path.join(dir0, "subdir"))
+        self.sync_dirs(dir0, dir1)
+        self.assertTrue(os.path.isdir(os.path.join(dir0, "subdir")))
+        self.assertTrue(os.path.isdir(os.path.join(dir1, "subdir")))
+        self.assertFalse(os.path.isdir(os.path.join(dir2, "subdir")))
+
+        # Sync all and subdir should be created in dir2 also
+        self.sync_all()
+        self.assertTrue(os.path.isdir(os.path.join(dir0, "subdir")))
+        self.assertTrue(os.path.isdir(os.path.join(dir1, "subdir")))
+        self.assertTrue(os.path.isdir(os.path.join(dir2, "subdir")))
+
     @unittest.skip
     def test_change_file_to_dir(self):
         """Changing a file into a directory of the same name."""

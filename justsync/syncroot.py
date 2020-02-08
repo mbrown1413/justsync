@@ -93,11 +93,11 @@ class SyncRoot:
 
         os.makedirs(self._tmp_path, exist_ok=True)
 
-        # `self._state` is an instance of SyncState which contains everything
+        # `self.state` is an instance of SyncState which contains everything
         # tracked between invocations of the program.
         self._read_state()
 
-        # Dict of changed paths not yet committed to `self._state`.
+        # Dict of changed paths not yet committed to `self.state`.
         # Type: {path: ("created"|"updated"|"deleted", None|StatResult)}
         self.changes = {}
 
@@ -162,20 +162,20 @@ class SyncRoot:
             pass
 
     def _read_state(self):
-        """Read the state file into `self._state` from the filesystem."""
+        """Read the state file into `self.state` from the filesystem."""
         if os.path.exists(self._state_file_path):
             with open(self._state_file_path) as f:
                 state_dict = json.load(f)
         else:
             state_dict = {}
 
-        self._state = SyncState(state_dict)
+        self.state = SyncState(state_dict)
 
     def write_state(self):
         """Write the internal state to permenant storage."""
         self._atomic_write(
             self._state_file_path,
-            json.dumps(self._state).encode()
+            json.dumps(self.state).encode()
         )
 
     def abspath(self, path):
@@ -209,7 +209,7 @@ class SyncRoot:
         # Inspect all paths in previous state, to see if they've been modified
         # or deleted.
         inspected_paths = set()
-        for path in self._state.paths():
+        for path in self.state.paths():
             self.inspect_path_for_changes(path)
             inspected_paths.add(path)
 
@@ -263,7 +263,7 @@ class SyncRoot:
         def stats_equal(stat1, stat2):
             return get_important_stat_info(stat1) == get_important_stat_info(stat2)
 
-        old_stat_info = self._state.path_get_stat(path)
+        old_stat_info = self.state.path_get_stat(path)
         stat_info = self.stat(path)
         if stat_info:
             # Path exists.
@@ -282,7 +282,7 @@ class SyncRoot:
             # "updated" change if it's different.
             elif not stats_equal(stat_info, old_stat_info) or force_hash:
                 current_hash = get_file_hash(abspath)
-                saved_hash = self._state.path_get_hash(path)
+                saved_hash = self.state.path_get_hash(path)
                 if current_hash != saved_hash:
                     self.changes[path] = ("updated", stat_info)
                     logger.debug(f'{self} Detected updated file "{path}"')
@@ -311,11 +311,11 @@ class SyncRoot:
             stat_info = self.stat(path)
             change_type = "deleted" if stat_info is None else "updated"
 
-        # Update self._state
+        # Update self.state
         if change_type in ("created", "updated"):
-            self._state.path_set_stat(path, stat_info)
+            self.state.path_set_stat(path, stat_info)
         elif change_type == "deleted":
-            self._state.path_delete(path)
+            self.state.path_delete(path)
         else:
             assert False
 
@@ -344,7 +344,7 @@ class SyncRoot:
             else:
                 file_hash = self._atomic_copy(source_abspath, abspath,
                                             do_hash=True)
-                self._state.path_set_hash(path, file_hash)
+                self.state.path_set_hash(path, file_hash)
         elif action == "delete":
             try:
                 if os.path.isdir(abspath):
@@ -433,17 +433,26 @@ class StatResult(dict):
             return self.get(name)
 
     @property
-    def modified_time(self):
+    def updated_time(self):
         return self.st_ctime_ns
 
     @property
+    def type(self):
+        if stat.S_ISREG(self.st_mode):
+            return "regular"
+        if stat.S_ISDIR(self.st_mode):
+            return "dir"
+        if  stat.S_ISLNK(self.st_mode):
+            return "link"
+
+    @property
     def is_regular(self):
-        return stat.S_ISREG(self.st_mode)
+        return self.type == "regular"
 
     @property
     def is_dir(self):
-        return stat.S_ISDIR(self.st_mode)
+        return self.type == "dir"
 
     @property
     def is_link(self):
-        return stat.S_ISLNK(self.st_mode)
+        return self.type == "link"
