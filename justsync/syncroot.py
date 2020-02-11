@@ -41,8 +41,9 @@ class SyncRoot:
 
     Tracks changes of the root directory persistently in a state file. On
     initialization the saved state is read in and compared to the current
-    filesystem. These changes are put in the `changes` attribute and later
-    resolved and moved to the saved state.
+    filesystem. The state of the filesystem is kept in the SyncState instance
+    `self.state`. `self.changes` tracks any changes between `self.state` and
+    the saved state on disk.
 
     When an argument or variable is a path, it will be a relative path inside
     self.root_path, unless the name is something like `abspath`.
@@ -50,10 +51,10 @@ class SyncRoot:
     The general steps to use SyncRoot are:
 
     1) Call `inspect_root_for_changes()` or `inspect_path_for_changes(path)` to
-    read the filesystem and get a list of changes made from the previously
-    stored state. This will add to the `changes` attribute indicating what
-    changed. It's safe to inspect for changes on paths that haven't actually
-    changed, in which cases nothing will be added to `changes`.
+    read the filesystem. This will alter `state` and add to `changes`
+    indicating what changed. It's safe to inspect for changes on paths that
+    haven't actually changed, in which cases nothing will be added to
+    `changes`.
 
     2) For each path in `changes`, resolve the change by calling one of the
     following:
@@ -61,14 +62,14 @@ class SyncRoot:
         * `perform_create()`
         * `perform_update()`
         * `perform_delete()`
-        * `reset_state()`
+        * `remove_change()`
 
     These all change the internal state to reflect the filesystem and clear any
     changes in the `changes` attribute for the path. The `perform_*()` variants
     will change the filesystem in some way beforehand. Which one is called
     depends on how conflicts are resolved between multiple SyncRoot objects.
     For example: if a file is changed and you want this root's copy to be
-    distributed to the others, call `reset_state()` on this root and call
+    distributed to the others, call `remove_change()` on this root and call
     `perform_update()` on all others.
 
     3) Call `write_state()` to write the internal state to disk.
@@ -173,6 +174,8 @@ class SyncRoot:
 
     def write_state(self):
         """Write the internal state to permenant storage."""
+        assert len(self.changes) == 0, "All changes must be resolved before " \
+                                       "saving state."
         self._atomic_write(
             self._state_file_path,
             json.dumps(self.state).encode()
@@ -191,7 +194,11 @@ class SyncRoot:
         try:
             s = os.stat(self.abspath(path))
             return StatResult(s)
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
+            # FileNotFoundError:
+            #     File was deleted
+            # NotADirectoryError:
+            #     Directory the file was in is now a file.
             return None
 
     def should_ignore_path(self, path):
@@ -270,12 +277,17 @@ class SyncRoot:
             # If file didn't used to exist. Make "created" change.
             if old_stat_info is None:
                 self.changes[path] = ("created", stat_info)
-                logger.debug(f'{self} Detected created file "{path}"')
+                if not stat_info.is_dir:
+                    self.state.path_set_hash(path, get_file_hash(abspath))
+                self.state.path_set_stat(path, stat_info)
+                logger.debug(f'{self} Detected created path "{path}"')
 
             # Path is directory
             elif stat_info.is_dir:
                 if not stats_equal(stat_info, old_stat_info):
                     self.changes[path] = ("updated", stat_info)
+                    self.state.path_set_hash(path, None)
+                    self.state.path_set_stat(path, stat_info)
                     logger.debug(f'{self} Detected updated directory "{path}"')
 
             # If the file stat has changed, check the file hash and make a
@@ -285,39 +297,23 @@ class SyncRoot:
                 saved_hash = self.state.path_get_hash(path)
                 if current_hash != saved_hash:
                     self.changes[path] = ("updated", stat_info)
+                    self.state.path_set_hash(path, current_hash)
+                    self.state.path_set_stat(path, stat_info)
                     logger.debug(f'{self} Detected updated file "{path}"')
         else:
             # File doesn't exist.
             # Make "deleted" change if it used to exist.
             if old_stat_info:
                 self.changes[path] = ("deleted", None)
+                self.state.path_delete(path)
                 logger.debug(f'{self} Detected deleted file "{path}"')
 
-    def reset_state(self, path):
+    def remove_change(self, path):
         """
-        Update internal state to reflect filesystem for this path. Write the
-        previously observed change in `path` to the state file and clear
-        self.changes for the path. Used after an action is performed on the
-        filesystem so we don't detect that action in the future as a user
-        change.
-
-        If the path is in self.changes, that state is written to the state
-        file. Otherwise, the state is gathered from the filesystem.
+        Clear the `changes` attribute of changes for this path.
         """
         if path in self.changes:
-            change_type, stat_info = self.changes[path]
             del self.changes[path]
-        else:
-            stat_info = self.stat(path)
-            change_type = "deleted" if stat_info is None else "updated"
-
-        # Update self.state
-        if change_type in ("created", "updated"):
-            self.state.path_set_stat(path, stat_info)
-        elif change_type == "deleted":
-            self.state.path_delete(path)
-        else:
-            assert False
 
         # If path changed while processing, this will trigger another update.
         # Force hashing to check for changes, since another process may have
@@ -345,12 +341,19 @@ class SyncRoot:
                     # name. Delete the file before creating the directory.
                     os.remove(abspath)
                 os.makedirs(abspath, exist_ok=True)
+                self.state.path_set_hash(path, None)
             else:
+                if os.path.isdir(abspath):
+                    # Destination is directory. Remove it so we can create the
+                    # file.
+                    os.rmdir(abspath)
                 file_hash = self._atomic_copy(source_abspath, abspath,
                                             do_hash=True)
                 self.state.path_set_hash(path, file_hash)
+            self.state.path_set_stat(path, self.stat(path))
 
         elif action == "delete":
+            self.state.path_delete(path)
             try:
                 if os.path.isdir(abspath):
                     os.rmdir(abspath)
@@ -359,7 +362,7 @@ class SyncRoot:
             except FileNotFoundError:
                 pass
 
-        self.reset_state(path)
+        self.remove_change(path)
 
 
 class SyncState(dict):

@@ -120,7 +120,7 @@ class Synchronizer:
                 if action != "deleted":
                     root.perform_delete(path)
                 else:
-                    root.reset_state(path)
+                    root.remove_change(path)
 
         # Somebody updated. Update the roots with older copies
         elif was_updated_or_created:
@@ -134,7 +134,7 @@ class Synchronizer:
             if root is not source_root:
                 root.perform_update(path, source_root.abspath(path))
             else:
-                root.reset_state(path)
+                root.remove_change(path)
 
     def _get_last_updated_root(self, path):
         # Find the root with the latest updated time of path.
@@ -162,12 +162,15 @@ class Synchronizer:
         other_changes = []
         for root in self.roots:
             for path, (action, stat) in root.changes.items():
-                if action == "delete":
+                if action == "deleted":
                     delete_changes.append(path)
                 else:
                     other_changes.append(path)
 
         if delete_changes:
+            # Sort by length, longest first. This ensures that files inside
+            # directories are delteed before the directory itself.
+            delete_changes.sort(key=len, reverse=True)
             return delete_changes[0]
         elif other_changes:
             return other_changes[0]

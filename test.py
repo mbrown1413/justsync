@@ -260,7 +260,6 @@ class TestSync(unittest.TestCase):
 
     def test_change_file_to_dir_without_file(self):
         """Changing a file into a directory of the same name."""
-        #TODO: File must be removed before directory is created
         dir0, dir1 = self.make_temp_dirs(2)
         self.write_file(dir0, "foo", "bar")
         self.sync_all()
@@ -275,13 +274,27 @@ class TestSync(unittest.TestCase):
 
     def test_change_dir_to_file(self):
         """Changing a directory into a file of the same name."""
-        #TODO: Directory must be removed before file is created
         dir0, dir1 = self.make_temp_dirs(2)
         self.write_dir(dir0, "foo")
         self.sync_all()
         self.assertDirPresent(dir0, "foo")
         self.assertDirPresent(dir1, "foo")
 
+        self.delete_dir(dir0, "foo")
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
+
+    def test_change_non_empty_dir_to_file(self):
+        """Changing a directory into a file of the same name."""
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo/bar", "baz")
+        self.sync_all()
+        self.assertFile(dir0, "foo/bar", "baz")
+        self.assertFile(dir1, "foo/bar", "baz")
+
+        self.delete_file(dir0, "foo/bar")
         self.delete_dir(dir0, "foo")
         self.write_file(dir0, "foo", "bar")
         self.sync_all()
