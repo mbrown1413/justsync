@@ -53,6 +53,14 @@ class TestSync(unittest.TestCase):
         os.remove(full_path)
         self.assertFileAbsent(root_path, path)
 
+    def write_dir(self, root_path, path):
+        full_path = os.path.join(root_path, path)
+        os.makedirs(full_path)
+
+    def delete_dir(self, root_path, path):
+        full_path = os.path.join(root_path, path)
+        os.rmdir(full_path)
+
     def sync_dirs(self, *dirs):
         """
         Create a SyncRoot for each of the given dirs and synchronize
@@ -88,6 +96,12 @@ class TestSync(unittest.TestCase):
         """Assert `path` is not present in `root_path`."""
         full_path = os.path.join(root_path, path)
         self.assertFalse(os.path.exists(full_path))
+
+    def assertDirPresent(self, root_path, path):
+        """Assert `path` is a directory in `root_path`."""
+        full_path = os.path.join(root_path, path)
+        self.assertTrue(os.path.exists(full_path))
+        self.assertTrue(os.path.isdir(full_path))
 
     ########## Tests ##########
 
@@ -156,17 +170,17 @@ class TestSync(unittest.TestCase):
 
     def test_empty_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
-        dir0_emptydir = os.path.join(dir0, "emptydir")
-        dir1_emptydir = os.path.join(dir1, "emptydir")
-        os.makedirs(dir0_emptydir)
-        self.assertTrue(os.path.isdir(dir0_emptydir))
+        self.write_dir(dir0, "emptydir")
+        self.assertDirPresent(dir0, "emptydir")
+        self.assertFileAbsent(dir1, "emptydir")
         self.sync_all()
-        self.assertTrue(os.path.isdir(dir1_emptydir))
+        self.assertDirPresent(dir0, "emptydir")
+        self.assertDirPresent(dir1, "emptydir")
 
-        os.rmdir(dir1_emptydir)
+        self.delete_dir(dir1, "emptydir")
         self.sync_all()
-        self.assertFalse(os.path.exists(dir0_emptydir))
-        self.assertFalse(os.path.exists(dir1_emptydir))
+        self.assertFileAbsent(dir0, "emptydir")
+        self.assertFileAbsent(dir1, "emptydir")
 
     def test_sync_3(self):
         """Sync 3 directories with each other."""
@@ -217,29 +231,62 @@ class TestSync(unittest.TestCase):
         self.sync_all()
 
         # Make subdir in dir0 and sync dir0/dir1 but not dir2
-        os.makedirs(os.path.join(dir0, "subdir"))
+        self.write_dir(dir0, "subdir")
         self.sync_dirs(dir0, dir1)
-        self.assertTrue(os.path.isdir(os.path.join(dir0, "subdir")))
-        self.assertTrue(os.path.isdir(os.path.join(dir1, "subdir")))
-        self.assertFalse(os.path.isdir(os.path.join(dir2, "subdir")))
+        self.assertDirPresent(dir0, "subdir")
+        self.assertDirPresent(dir1, "subdir")
+        self.assertFileAbsent(dir2, "subdir")
 
         # Sync all and subdir should be created in dir2 also
         self.sync_all()
-        self.assertTrue(os.path.isdir(os.path.join(dir0, "subdir")))
-        self.assertTrue(os.path.isdir(os.path.join(dir1, "subdir")))
-        self.assertTrue(os.path.isdir(os.path.join(dir2, "subdir")))
+        self.assertDirPresent(dir0, "subdir")
+        self.assertDirPresent(dir1, "subdir")
+        self.assertDirPresent(dir2, "subdir")
 
-    @unittest.skip
-    def test_change_file_to_dir(self):
+    def test_change_file_to_dir_with_file(self):
         """Changing a file into a directory of the same name."""
         #TODO: File must be removed before directory is created
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
 
-    @unittest.skip
+        self.delete_file(dir0, "foo")
+        self.write_file(dir0, "foo/bar", "baz")
+        self.sync_all()
+        self.assertFile(dir0, "foo/bar", "baz")
+        self.assertFile(dir1, "foo/bar", "baz")
+
+    def test_change_file_to_dir_without_file(self):
+        """Changing a file into a directory of the same name."""
+        #TODO: File must be removed before directory is created
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
+
+        self.delete_file(dir0, "foo")
+        self.write_dir(dir0, "foo")
+        self.sync_all()
+        self.assertDirPresent(dir0, "foo")
+        self.assertDirPresent(dir1, "foo")
+
     def test_change_dir_to_file(self):
         """Changing a directory into a file of the same name."""
         #TODO: Directory must be removed before file is created
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_dir(dir0, "foo")
+        self.sync_all()
+        self.assertDirPresent(dir0, "foo")
+        self.assertDirPresent(dir1, "foo")
+
+        self.delete_dir(dir0, "foo")
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir0, "foo", "bar")
+        self.assertFile(dir1, "foo", "bar")
 
     @unittest.skip
     def test_file_executable_bit(self):
@@ -269,6 +316,18 @@ class TestSync(unittest.TestCase):
         or other bugs. Here we artificially induce an infinite loop to see if
         it's detected and broken.
         """
+        raise NotImplementedError()
+
+    @unittest.skip
+    def test_symlink(self):
+        raise NotImplementedError()
+
+    @unittest.skip
+    def test_symlink_change_to_file(self):
+        raise NotImplementedError()
+
+    @unittest.skip
+    def test_file_change_to_symlink(self):
         raise NotImplementedError()
 
 

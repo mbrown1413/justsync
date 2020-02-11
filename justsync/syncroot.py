@@ -340,11 +340,16 @@ class SyncRoot:
         # Perform action
         if action in ("create", "update"):
             if os.path.isdir(source_abspath):
+                if os.path.isfile(abspath):
+                    # A directory was deleted and a file created with the same
+                    # name. Delete the file before creating the directory.
+                    os.remove(abspath)
                 os.makedirs(abspath, exist_ok=True)
             else:
                 file_hash = self._atomic_copy(source_abspath, abspath,
                                             do_hash=True)
                 self.state.path_set_hash(path, file_hash)
+
         elif action == "delete":
             try:
                 if os.path.isdir(abspath):

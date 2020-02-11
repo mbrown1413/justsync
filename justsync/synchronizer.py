@@ -40,7 +40,7 @@ class Synchronizer:
         """
         path_seen_counter = defaultdict(lambda: 0)
         while True:
-            path = self._get_changed_file()
+            path = self._get_changed_path()
             if path is None:
                 break
             path_seen_counter[path] += 1
@@ -54,7 +54,7 @@ class Synchronizer:
                 logger.warning(f"Path encountered more than 10 times: {path}")
                 break
 
-            self._sync_file(path)
+            self._sync_path(path)
 
         # If the previous sync call didn't include the same roots that we're
         # dealing with now, any roots left out of the last sync wouldn't have
@@ -71,13 +71,13 @@ class Synchronizer:
                     # We know there aren't actually explicit changes detected,
                     # but this will check metadata and update if it differs
                     # between roots.
-                    self._sync_file(path)
+                    self._sync_path(path)
 
         # Write state to all roots
         for root in self.roots:
             root.write_state()
 
-    def _sync_file(self, path):
+    def _sync_path(self, path):
         """
         Look at changes for the given path in all roots and perform actions
         to synchronize path in all of them.
@@ -154,12 +154,26 @@ class Synchronizer:
 
         return last_updated_root
 
-    def _get_changed_file(self):
+    def _get_changed_path(self):
         """Get a path that has changed in one of the roots."""
+        #TODO: Optimize this so we don't have to iterate over changes
+        #      n_changes**2 times.
+        delete_changes = []
+        other_changes = []
         for root in self.roots:
-            for changed_file in root.changes:
-                return changed_file
+            for path, (action, stat) in root.changes.items():
+                if action == "delete":
+                    delete_changes.append(path)
+                else:
+                    other_changes.append(path)
+
+        if delete_changes:
+            return delete_changes[0]
+        elif other_changes:
+            return other_changes[0]
+        else:
+            return None
 
     def watch(self):
-        # Watch all roots and call self._sync_file(path) for any path changed.
+        # Watch all roots and call self._sync_path(path) for any path changed.
         raise NotImplementedError
