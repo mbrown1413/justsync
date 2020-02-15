@@ -192,7 +192,7 @@ class SyncRoot:
     def stat(self, path):
         """Return a StatResult object of the path."""
         try:
-            s = os.stat(self.abspath(path))
+            s = os.stat(self.abspath(path), follow_symlinks=False)
             return StatResult(s)
         except (FileNotFoundError, NotADirectoryError):
             # FileNotFoundError:
@@ -207,7 +207,7 @@ class SyncRoot:
         """
         return path_in_dir(self.abspath(path), self._hidden_dir)
 
-    def inspect_root_for_changes(self):
+    def inspect_root_for_changes(self, force_hash=False):
         """
         Compare the filesystem to internal state and add to `self.changes` if
         they are different.
@@ -217,13 +217,13 @@ class SyncRoot:
         # or deleted.
         inspected_paths = set()
         for path in self.state.paths():
-            self.inspect_path_for_changes(path)
+            self.inspect_path_for_changes(path, force_hash=force_hash)
             inspected_paths.add(path)
 
         # List all paths inside the root and inspect them if they haven't been.
         for path in list_paths(self.root_path):
             if path not in inspected_paths:
-                self.inspect_path_for_changes(path)
+                self.inspect_path_for_changes(path, force_hash=force_hash)
 
 
     def inspect_path_for_changes(self, path, force_hash=False):
@@ -335,6 +335,28 @@ class SyncRoot:
 
         # Perform action
         if action in ("create", "update"):
+
+            # Ensure the directory exists before creating the file. This is
+            # a little bit complicated because in the path leading to this
+            # file, there could be a file instead of a directory. For
+            # example if we're creating "foo/bar" in this action, "foo" may
+            # be a file. In this case we need to delete the file, update
+            # the state to reflect this, and remove any changes. This can
+            # happen anywhere on the path leading up to the path being
+            # updated.
+            path_to_dir = os.path.relpath(os.path.dirname(abspath), self.root_path)
+            dir_path = os.path.split(path_to_dir)
+            for i in range(1, len(dir_path)+1):
+                partial_path = os.path.join(*dir_path[0:i])
+                partial_abspath = self.abspath(partial_path)
+                if os.path.isfile(partial_abspath):
+                    os.remove(partial_abspath)
+                if not os.path.exists(partial_abspath):
+                    os.makedirs(partial_abspath)
+                    self.state.path_set_hash(partial_path, None)
+                    self.state.path_set_stat(partial_path, self.stat(partial_path))
+                    self.remove_change(partial_path)
+
             if os.path.isdir(source_abspath):
                 if os.path.isfile(abspath):
                     # A directory was deleted and a file created with the same

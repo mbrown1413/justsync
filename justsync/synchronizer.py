@@ -10,7 +10,7 @@ class Synchronizer:
     Coordinates multiple SyncRoot objects.
     """
 
-    def __init__(self, *roots):
+    def __init__(self, *roots, force_hash=False):
         self.roots = roots
 
         # Error if any of the roots are:
@@ -30,7 +30,7 @@ class Synchronizer:
                     )
 
         for root in self.roots:
-            root.inspect_root_for_changes()
+            root.inspect_root_for_changes(force_hash=force_hash)
 
     def sync(self, trust_previous_sync=False):
         """Sync all roots with eachother.
@@ -113,7 +113,7 @@ class Synchronizer:
             if len(types) > 1 or len(hashes) > 1:
                 was_updated_or_created = True
 
-        # If at least one dir has deleted, delete for everybody.
+        # If at least one root has deleted, delete for everybody.
         if was_deleted:
             for root in self.roots:
                 action, stat = root.changes.get(path, (None, None))
@@ -124,56 +124,102 @@ class Synchronizer:
 
         # Somebody updated. Update the roots with older copies
         elif was_updated_or_created:
-            source_root = self._get_last_updated_root(path)
+            source_root = self._get_root_with_golden_copy(path)
             self._update_roots(source_root, path)
 
     def _update_roots(self, source_root, path):
         """Update all roots to `source_root`'s copy of path."""
-        # TODO: Compare file hashes before actually writing.
         for root in self.roots:
             if root is not source_root:
-                root.perform_update(path, source_root.abspath(path))
+
+                # Only perform change if mode or stat actually changed
+                old_hash = root.state.path_get_hash(path)
+                old_stat = root.state.path_get_stat(path)
+                new_hash = source_root.state.path_get_hash(path)
+                new_stat = source_root.state.path_get_stat(path)
+                if old_hash == new_hash and \
+                        old_stat and new_stat and \
+                        old_stat.st_mode == new_stat.st_mode:
+                    root.remove_change(path)
+                else:
+                    root.perform_update(path, source_root.abspath(path))
             else:
                 root.remove_change(path)
 
-    def _get_last_updated_root(self, path):
+    def _get_root_with_golden_copy(self, path):
+        """
+        Looks at `path` in all roots and returns the root that has the best
+        (usually most up to date) copy.
+        """
         # Find the root with the latest updated time of path.
-        last_updated = None
-        last_updated_root = None
+        root_stats = []  # [(root, was_changed, stat), ...]
         for root in self.roots:
 
             # Get root from root.changes or root.state, or None.
+            was_changed = True
             stat = root.changes.get(path, (None, None))[1]
             if stat is None:
+                was_changed = False
                 stat = root.state.path_get_stat(path)
 
             if stat:
-                if last_updated is None or stat.updated_time > last_updated:
-                    last_updated = stat.updated_time
-                    last_updated_root = root
+                root_stats.append((root, was_changed, stat))
 
-        return last_updated_root
+        def sort_key(root_stat):
+            root, was_changed, stat = root_stat
+            return (
+                # Prioritize actual changes seen over old info
+                0 if was_changed else 1,
+                # Directories win over files
+                0 if stat.is_dir else 1,
+                # Later paths win over older paths.
+                -stat.updated_time
+            )
+
+        root_stats.sort(key=sort_key)
+        golden_root, _, _ = root_stats[0]
+        return golden_root
 
     def _get_changed_path(self):
         """Get a path that has changed in one of the roots."""
         #TODO: Optimize this so we don't have to iterate over changes
         #      n_changes**2 times.
-        delete_changes = []
-        other_changes = []
+        changes = []
         for root in self.roots:
             for path, (action, stat) in root.changes.items():
-                if action == "deleted":
-                    delete_changes.append(path)
-                else:
-                    other_changes.append(path)
+                changes.append((path, action, stat))
 
-        if delete_changes:
-            # Sort by length, longest first. This ensures that files inside
-            # directories are delteed before the directory itself.
-            delete_changes.sort(key=len, reverse=True)
-            return delete_changes[0]
-        elif other_changes:
-            return other_changes[0]
+        # Sort order
+        # From most to least significant, here are the factors that decide
+        # which change is returned:
+        #
+        # Deleted first: Changing path from file to dir will delete that file.
+        #   Perform deletions first so we delete the file first anyways.
+        #   TODO: Honestly not sure if this is needed. Removing it doesn't fail
+        #     any tests.
+        #
+        # Longest path first:
+        #   For deletes, this insures that files inside directories are deleted before the
+        #   directory itself.
+        #
+        #   For updates, this ensures that files are updated before the
+        #   containing directory is changed to a file type. For example,
+        #   suppose root1 changes "foo" from a directory to a file of the same name, and root2
+        #   updates "foo/bar". The "foo/bar" update will be performed first,
+        #   and the process of root1 updating "foo/bar" it will remove the
+        #   pending change to "foo".
+        def sort_key(change):
+            path, action, stat = change
+            action_priority = ["deleted", "updated", "created"]
+            return (
+                action_priority.index(action),
+                -len(path),
+            )
+
+        if changes:
+            changes.sort(key=sort_key)
+            path, action, stat = changes[0]
+            return path
         else:
             return None
 

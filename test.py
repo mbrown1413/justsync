@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import logging
 import shutil
+import stat
 
 from justsync import SyncRoot, Synchronizer
 
@@ -12,6 +13,7 @@ root_logger.setLevel(logging.DEBUG)
 root_logger.addHandler(logging.StreamHandler(sys.stdout))
 
 class TestSync(unittest.TestCase):
+    _reverse_sync_order = False
 
     def setUp(self):
         self._temp_dir_base = None
@@ -61,21 +63,23 @@ class TestSync(unittest.TestCase):
         full_path = os.path.join(root_path, path)
         os.rmdir(full_path)
 
-    def sync_dirs(self, *dirs):
+    def sync_dirs(self, *dirs, force_hash=False):
         """
         Create a SyncRoot for each of the given dirs and synchronize
         them.
         """
         roots = [SyncRoot(d) for d in dirs]
-        synchronizer = Synchronizer(*roots)
+        if self._reverse_sync_order:
+            roots = reversed(roots)
+        synchronizer = Synchronizer(*roots, force_hash=force_hash)
         synchronizer.sync()
 
-    def sync_all(self):
+    def sync_all(self, force_hash=False):
         """
         Sync all temporary directories returned by `make_temp_dir` and
         `make_temp_dirs`.
         """
-        self.sync_dirs(*self._temp_dirs)
+        self.sync_dirs(*self._temp_dirs, force_hash=force_hash)
 
     ########## Assertions ##########
 
@@ -132,7 +136,10 @@ class TestSync(unittest.TestCase):
         self.sync_all()
 
         self.write_file(dir0, "foo", "baz")
-        self.sync_all()
+        # Force hash here because there is technically a race condition if the
+        # mtime written by the first sync is the same as the mtime written by
+        # the file-write directly after.
+        self.sync_all(force_hash=True)
 
         self.assertFile(dir0, "foo", "baz")
         self.assertFile(dir1, "foo", "baz")
@@ -301,19 +308,49 @@ class TestSync(unittest.TestCase):
         self.assertFile(dir0, "foo", "bar")
         self.assertFile(dir1, "foo", "bar")
 
-    @unittest.skip
     def test_file_executable_bit(self):
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo", "bar")
+        self.write_file(dir1, "foo", "bar")
+        self.sync_all()
+
+        # Executable bit not set
+        dir0_foo = os.path.join(dir0, "foo")
+        stat_result = os.stat(dir0_foo)
+        self.assertFalse(stat_result.st_mode & stat.S_IXUSR)
+
+        # Set executable bit and sync
+        os.chmod(dir0_foo, stat_result.st_mode | stat.S_IXUSR)
+        self.sync_all()
+
+        # Executable bit is set
+        stat_result = os.stat(dir0_foo)
+        self.assertTrue(stat_result.st_mode & stat.S_IXUSR)
 
     @unittest.skip
     def test_file_conflict(self):
         """Basic conflict where two roots edit the same file."""
         raise NotImplementedError()
 
-    @unittest.skip
+    def test_file_empty_dir_conflict(self):
+        """Conflict of file and empty directory of the same name."""
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo")
+        self.write_dir(dir1, "foo")
+        self.sync_all()
+        # Directory wins. File is deleted in dir0
+        self.assertDirPresent(dir0, "foo")
+        self.assertDirPresent(dir1, "foo")
+
     def test_file_dir_conflict(self):
-        """Conflict of file and directory of the same name."""
-        raise NotImplementedError()
+        """Conflict of file and non-empty directory of the same name."""
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo")
+        self.write_file(dir1, "foo/bar", "baz")
+        self.sync_all()
+        # Directory wins. File is deleted in dir0
+        self.assertFile(dir0, "foo/bar", "baz")
+        self.assertFile(dir1, "foo/bar", "baz")
 
     @unittest.skip
     def test_file_update_delete_conflict(self):
@@ -321,18 +358,15 @@ class TestSync(unittest.TestCase):
         raise NotImplementedError()
 
     @unittest.skip
-    def test_no_infinite_loop(self):
-        """Test infinite loop detection.
-
-        We detect loops where the same file is sync'd over and over again. This
-        can be caused by overlapping roots (which we have a separate check for)
-        or other bugs. Here we artificially induce an infinite loop to see if
-        it's detected and broken.
-        """
+    def test_symlink(self):
         raise NotImplementedError()
 
     @unittest.skip
-    def test_symlink(self):
+    def test_symlink_dir(self):
+        raise NotImplementedError()
+
+    @unittest.skip
+    def test_symlink_update(self):
         raise NotImplementedError()
 
     @unittest.skip
@@ -343,6 +377,13 @@ class TestSync(unittest.TestCase):
     def test_file_change_to_symlink(self):
         raise NotImplementedError()
 
+class TestSyncReverse(TestSync):
+    """Same tests but reverse the order of SyncRoots passed to Synchronizer.
+
+    The order shouldn't matter. This will find bugs where order matters when
+    finding which root has the golden copy of a path.
+    """
+    _reverse_sync_order = True
 
 if __name__ == "__main__":
     unittest.main()
