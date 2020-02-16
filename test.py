@@ -5,6 +5,7 @@ import tempfile
 import logging
 import shutil
 import stat
+import time
 
 from justsync import SyncRoot, Synchronizer
 
@@ -327,10 +328,19 @@ class TestSync(unittest.TestCase):
         stat_result = os.stat(dir0_foo)
         self.assertTrue(stat_result.st_mode & stat.S_IXUSR)
 
-    @unittest.skip
     def test_file_conflict(self):
         """Basic conflict where two roots edit the same file."""
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo")
+        self.sync_all()
+
+        self.write_file(dir0, "foo", "bar")
+        time.sleep(0.1)
+        self.write_file(dir1, "foo", "baz")
+        self.sync_all()
+        # File with later mtime wins
+        self.assertFile(dir0, "foo", "baz")
+        self.assertFile(dir1, "foo", "baz")
 
     def test_file_empty_dir_conflict(self):
         """Conflict of file and empty directory of the same name."""
@@ -352,17 +362,24 @@ class TestSync(unittest.TestCase):
         self.assertFile(dir0, "foo/bar", "baz")
         self.assertFile(dir1, "foo/bar", "baz")
 
-    @unittest.skip
     def test_file_update_delete_conflict(self):
         """Conflict where one root updates a file and another deletes it."""
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+
+        self.write_file(dir0, "foo", "baz")
+        self.delete_file(dir1, "foo")
+        self.sync_all()
+        self.assertFileAbsent(dir0, "foo")
+        self.assertFileAbsent(dir1, "foo")
 
     def test_symlink(self):
         dir0, dir1 = self.make_temp_dirs(2)
         target1 = os.path.join(self.temp_dir_base, "target1")
         target2 = os.path.join(self.temp_dir_base, "target2")
-        dir0_link = os.path.join(dir0, "linkname")
-        dir1_link = os.path.join(dir1, "linkname")
+        dir0_link = os.path.join(dir0, "foo")
+        dir1_link = os.path.join(dir1, "foo")
         with open(target1, 'w') as f:
             f.write("Target Contents")
         with open(target2, 'w') as f:
@@ -388,8 +405,8 @@ class TestSync(unittest.TestCase):
     def test_symlink_dir(self):
         dir0, dir1 = self.make_temp_dirs(2)
         target = os.path.join(self.temp_dir_base, "target")
-        dir0_link = os.path.join(dir0, "linkname")
-        dir1_link = os.path.join(dir1, "linkname")
+        dir0_link = os.path.join(dir0, "foo")
+        dir1_link = os.path.join(dir1, "foo")
 
         os.makedirs(target)
         os.symlink(target, dir0_link)
@@ -405,8 +422,8 @@ class TestSync(unittest.TestCase):
     def test_symlink_change_to_file(self):
         dir0, dir1 = self.make_temp_dirs(2)
         target = os.path.join(self.temp_dir_base, "target")
-        dir0_link = os.path.join(dir0, "linkname")
-        dir1_link = os.path.join(dir1, "linkname")
+        dir0_link = os.path.join(dir0, "foo")
+        dir1_link = os.path.join(dir1, "foo")
         with open(target, 'w') as f:
             f.write("Target Contents")
         os.symlink(target, dir0_link)
@@ -416,14 +433,29 @@ class TestSync(unittest.TestCase):
         with open(dir0_link, 'w') as f:
             f.write("Now a file")
         self.sync_all()
-        self.assertFile(dir0, "linkname", "Now a file")
-        self.assertFile(dir1, "linkname", "Now a file")
+        self.assertFile(dir0, "foo", "Now a file")
+        self.assertFile(dir1, "foo", "Now a file")
         self.assertFalse(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
         self.assertFalse(stat.S_ISLNK(os.stat(dir1_link, follow_symlinks=False).st_mode))
 
-    @unittest.skip
     def test_file_change_to_symlink(self):
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        target = os.path.join(self.temp_dir_base, "target")
+        dir0_link = os.path.join(dir0, "foo")
+        dir1_link = os.path.join(dir1, "foo")
+        with open(target, 'w') as f:
+            f.write("Target Contents")
+        self.write_file(dir0, "foo", "bar")
+        self.sync_all()
+        self.assertFile(dir1, "foo", "bar")
+
+        os.remove(dir0_link)
+        os.symlink(target, dir0_link)
+        self.sync_all()
+        self.assertTrue(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertTrue(stat.S_ISLNK(os.stat(dir1_link, follow_symlinks=False).st_mode))
+        self.assertEqual(os.readlink(dir0_link), target)
+        self.assertEqual(os.readlink(dir1_link), target)
 
 class TestSyncReverse(TestSync):
     """Same tests but reverse the order of SyncRoots passed to Synchronizer.
