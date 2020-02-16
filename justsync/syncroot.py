@@ -27,11 +27,21 @@ def path_in_dir(path, dir_path):
     common_path = os.path.commonpath((path, dir_path))
     return common_path.endswith(dir_path)
 
-def get_file_hash(abspath):
+def get_file_hash(abspath, stat_result=None):
+    if not stat_result:
+        stat_result = StatResult(os.stat(abspath, follow_symlinks=False))
     h = hashlib.md5()
-    with open(abspath, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            h.update(chunk)
+
+    if stat_result.is_link:
+        target = os.readlink(abspath)
+        h.update(target.encode())
+    elif stat_result.is_regular:
+        with open(abspath, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                h.update(chunk)
+    else:
+        raise NotImplementedError()
+
     return h.hexdigest()
 
 
@@ -117,7 +127,7 @@ class SyncRoot:
         """
         file_hash = None
         with self._temp_file() as temp_abspath:
-            shutil.copy(source_abspath, temp_abspath)
+            shutil.copy(source_abspath, temp_abspath, follow_symlinks=False)
             if do_hash:
                 #TODO: Hash while copying
                 file_hash = get_file_hash(temp_abspath)
@@ -357,13 +367,16 @@ class SyncRoot:
                     self.state.path_set_stat(partial_path, self.stat(partial_path))
                     self.remove_change(partial_path)
 
-            if os.path.isdir(source_abspath):
+            # Directories
+            if os.path.isdir(source_abspath) and not os.path.islink(source_abspath):
                 if os.path.isfile(abspath):
                     # A directory was deleted and a file created with the same
                     # name. Delete the file before creating the directory.
                     os.remove(abspath)
                 os.makedirs(abspath, exist_ok=True)
                 self.state.path_set_hash(path, None)
+
+            # Files / Symlinks
             else:
                 if os.path.isdir(abspath):
                     # Destination is directory. Remove it so we can create the

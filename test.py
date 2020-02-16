@@ -16,24 +16,24 @@ class TestSync(unittest.TestCase):
     _reverse_sync_order = False
 
     def setUp(self):
-        self._temp_dir_base = None
+        self.temp_dir_base = None
         self._temp_dirs = []
 
     def tearDown(self):
-        if self._temp_dir_base:
-            shutil.rmtree(self._temp_dir_base)
+        if self.temp_dir_base:
+            shutil.rmtree(self.temp_dir_base)
 
     ########## Test Tools ##########
 
     def make_temp_dir(self):
-        if not self._temp_dir_base:
-            self._temp_dir_base = tempfile.mkdtemp()
+        if not self.temp_dir_base:
+            self.temp_dir_base = tempfile.mkdtemp()
 
         i = 0
-        path = os.path.join(self._temp_dir_base, str(i))
+        path = os.path.join(self.temp_dir_base, str(i))
         while os.path.exists(path):
             i += 1
-            path = os.path.join(self._temp_dir_base, str(i))
+            path = os.path.join(self.temp_dir_base, str(i))
 
         os.makedirs(path)
         self._temp_dirs.append(path)
@@ -357,21 +357,69 @@ class TestSync(unittest.TestCase):
         """Conflict where one root updates a file and another deletes it."""
         raise NotImplementedError()
 
-    @unittest.skip
     def test_symlink(self):
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        target1 = os.path.join(self.temp_dir_base, "target1")
+        target2 = os.path.join(self.temp_dir_base, "target2")
+        dir0_link = os.path.join(dir0, "linkname")
+        dir1_link = os.path.join(dir1, "linkname")
+        with open(target1, 'w') as f:
+            f.write("Target Contents")
+        with open(target2, 'w') as f:
+            f.write("Target Contents 2")
 
-    @unittest.skip
+        os.symlink(target1, dir0_link)
+        self.assertTrue(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertEqual(os.readlink(dir0_link), target1)
+
+        self.sync_all()
+        self.assertTrue(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertTrue(stat.S_ISLNK(os.stat(dir1_link, follow_symlinks=False).st_mode))
+        self.assertEqual(os.readlink(dir0_link), target1)
+        self.assertEqual(os.readlink(dir1_link), target1)
+
+        # Update where symlink points to
+        os.remove(dir0_link)
+        os.symlink(target2, dir0_link)
+        self.sync_all()
+        self.assertEqual(os.readlink(dir0_link), target2)
+        self.assertEqual(os.readlink(dir1_link), target2)
+
     def test_symlink_dir(self):
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        target = os.path.join(self.temp_dir_base, "target")
+        dir0_link = os.path.join(dir0, "linkname")
+        dir1_link = os.path.join(dir1, "linkname")
 
-    @unittest.skip
-    def test_symlink_update(self):
-        raise NotImplementedError()
+        os.makedirs(target)
+        os.symlink(target, dir0_link)
+        self.assertTrue(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertEqual(os.readlink(dir0_link), target)
 
-    @unittest.skip
+        self.sync_all()
+        self.assertTrue(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertTrue(stat.S_ISLNK(os.stat(dir1_link, follow_symlinks=False).st_mode))
+        self.assertEqual(os.readlink(dir0_link), target)
+        self.assertEqual(os.readlink(dir1_link), target)
+
     def test_symlink_change_to_file(self):
-        raise NotImplementedError()
+        dir0, dir1 = self.make_temp_dirs(2)
+        target = os.path.join(self.temp_dir_base, "target")
+        dir0_link = os.path.join(dir0, "linkname")
+        dir1_link = os.path.join(dir1, "linkname")
+        with open(target, 'w') as f:
+            f.write("Target Contents")
+        os.symlink(target, dir0_link)
+        self.sync_all()
+
+        os.remove(dir0_link)
+        with open(dir0_link, 'w') as f:
+            f.write("Now a file")
+        self.sync_all()
+        self.assertFile(dir0, "linkname", "Now a file")
+        self.assertFile(dir1, "linkname", "Now a file")
+        self.assertFalse(stat.S_ISLNK(os.stat(dir0_link, follow_symlinks=False).st_mode))
+        self.assertFalse(stat.S_ISLNK(os.stat(dir1_link, follow_symlinks=False).st_mode))
 
     @unittest.skip
     def test_file_change_to_symlink(self):
