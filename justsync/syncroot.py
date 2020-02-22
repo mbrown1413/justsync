@@ -215,7 +215,8 @@ class SyncRoot:
         """
         Return True if no changes should ever be detected from the given path.
         """
-        return path_in_dir(self.abspath(path), self._hidden_dir)
+        abspath = self.abspath(path)
+        return path_in_dir(abspath, self._hidden_dir) or abspath == self.root_path
 
     def inspect_root_for_changes(self, force_hash=False):
         """

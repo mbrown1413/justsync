@@ -1,6 +1,14 @@
 from collections import defaultdict
 import os
+import time
 import logging
+
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+    _has_watchdog = True
+except ImportError:
+    _has_watchdog = False
 
 logger = logging.getLogger(__name__)
 
@@ -225,4 +233,48 @@ class Synchronizer:
 
     def watch(self):
         # Watch all roots and call self._sync_path(path) for any path changed.
-        raise NotImplementedError
+
+        if not _has_watchdog:
+            print("Could not import watchdog. Please install it.")
+            print("    $ pip install watchdog")
+            return
+
+        self.sync()
+
+        class SyncRootEventHandler(FileSystemEventHandler):
+            def __init__(self, root):
+                self.root = root
+                self.updated_paths = set()
+
+            def on_any_event(self, event):
+                self.add_path(event.src_path)
+                if hasattr(event, "dest_path"):
+                    self.add_path(event.dest_path)
+
+            def add_path(self, path):
+                path = os.path.normpath(os.path.abspath(path))
+                path = os.path.relpath(path, self.root.root_path)
+                self.updated_paths.add(path)
+
+        observer = Observer()
+        event_handlers = []
+        for root in self.roots:
+            event_handler = SyncRootEventHandler(root)
+            event_handlers.append(event_handler)
+            observer.schedule(
+                event_handler,
+                root.root_path,
+                recursive=True
+            )
+        observer.start()
+
+        while True:
+            time.sleep(5)
+
+            #XXX event_handler.updated_paths updated asynchronously?
+            for event_handler in event_handlers:
+                for path in event_handler.updated_paths:
+                    event_handler.root.inspect_path_for_changes(path)
+                event_handler.updated_paths = set()
+
+            self.sync(trust_previous_sync=True)
