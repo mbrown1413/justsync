@@ -2,16 +2,19 @@ import os
 import sys
 import unittest
 import tempfile
-import logging
 import shutil
 import stat
 import time
 
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from justsync import SyncRoot, Synchronizer
 
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)
-root_logger.addHandler(logging.StreamHandler(sys.stdout))
+DEBUG = False
+if DEBUG:
+    import logging
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(logging.StreamHandler(sys.stdout))
 
 class TestSync(unittest.TestCase):
     _reverse_sync_order = False
