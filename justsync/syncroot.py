@@ -106,7 +106,7 @@ class SyncRoot:
 
         # `self.state` is an instance of SyncState which contains everything
         # tracked between invocations of the program.
-        self._read_state()
+        self.state = SyncState(self._state_file_path)
 
         # Dict of changed paths not yet committed to `self.state`.
         # Type: {path: ("created"|"updated"|"deleted", None|StatResult)}
@@ -172,24 +172,16 @@ class SyncRoot:
         except FileNotFoundError:
             pass
 
-    def _read_state(self):
-        """Read the state file into `self.state` from the filesystem."""
-        if os.path.exists(self._state_file_path):
-            with open(self._state_file_path) as f:
-                state_dict = json.load(f)
-        else:
-            state_dict = {}
-
-        self.state = SyncState(state_dict)
-
     def write_state(self):
         """Write the internal state to permenant storage."""
         assert len(self.changes) == 0, "All changes must be resolved before " \
                                        "saving state."
-        self._atomic_write(
-            self._state_file_path,
-            json.dumps(self.state).encode()
-        )
+        if self.state.modified:
+            self._atomic_write(
+                self._state_file_path,
+                self.state.serialize()
+            )
+            self.state.modified = False
 
     def abspath(self, path):
         """Return the absolute path of the given path."""
@@ -235,7 +227,6 @@ class SyncRoot:
         for path in list_paths(self.root_path):
             if path not in inspected_paths:
                 self.inspect_path_for_changes(path, force_hash=force_hash)
-
 
     def inspect_path_for_changes(self, path, force_hash=False):
         """
@@ -407,9 +398,18 @@ class SyncState(dict):
     This is just a dictionary with some helper methods to provide structure.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, path):
+        if os.path.exists(path):
+            with open(path) as f:
+                state_dict = json.load(f)
+        else:
+            state_dict = {}
+        super().__init__(state_dict)
         self.setdefault("paths", {})
+        self.modified = False
+
+    def serialize(self):
+        return json.dumps(self).encode()
 
     def paths(self):
         """Return a list of paths."""
@@ -420,6 +420,7 @@ class SyncState(dict):
         return path_attrs.get(attr, None) if path_attrs else None
 
     def _path_set_attr(self, path, attr, value):
+        self.modified = True
         if path not in self["paths"]:
             self["paths"][path] = {}
         self["paths"][path][attr] = value
@@ -438,6 +439,7 @@ class SyncState(dict):
         self._path_set_attr(path, "hash", value)
 
     def path_delete(self, path):
+        self.modified = True
         del self["paths"][path]
 
 
