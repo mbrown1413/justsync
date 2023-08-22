@@ -382,10 +382,10 @@ class SyncRoot:
         elif action == "delete":
             self.state.path_delete(path)
             try:
-                if os.path.isdir(abspath):
-                    os.rmdir(abspath)
-                else:
+                if os.path.islink(abspath) or not os.path.isdir(abspath):
                     os.remove(abspath)
+                else:
+                    os.rmdir(abspath)
             except FileNotFoundError:
                 pass
 

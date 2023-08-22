@@ -460,6 +460,22 @@ class TestSync(unittest.TestCase):
         self.assertEqual(os.readlink(dir0_link), target)
         self.assertEqual(os.readlink(dir1_link), target)
 
+    def test_delete_symlink_to_dir(self):
+        dir0, dir1 = self.make_temp_dirs(2)
+        target = os.path.join(self.temp_dir_base, "target")
+        dir0_link = os.path.join(dir0, "foo")
+        dir1_link = os.path.join(dir1, "foo")
+
+        os.makedirs(target)
+        os.symlink(target, dir0_link)
+        self.sync_all()
+        self.assertFilePresent(dir1, "foo")
+
+        os.remove(dir0_link)
+        self.sync_all()
+        self.assertFileAbsent(dir1, "foo")
+
+
 class TestSyncReverse(TestSync):
     """Same tests but reverse the order of SyncRoots passed to Synchronizer.
 
